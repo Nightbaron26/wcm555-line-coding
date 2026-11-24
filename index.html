@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WCM555 Line Coding Simulator</title>
+<style>
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: #eef3f9;
+  color: #172b46;
+  font-family: Arial, sans-serif;
+  line-height: 1.5;
+}
+main { max-width: 1100px; margin: auto; padding: 24px; }
+header {
+  background: #122b49; color: white;
+  padding: 28px; border-radius: 16px;
+}
+h1 { margin: 0 0 8px; }
+h2 { font-size: 20px; margin-top: 0; }
+.card {
+  background: white; padding: 22px; margin-top: 20px;
+  border-radius: 14px; box-shadow: 0 3px 14px #172b4610;
+}
+.controls {
+  display: grid; grid-template-columns: 2fr 1fr;
+  gap: 20px;
+}
+label { display: block; font-weight: bold; margin-bottom: 8px; }
+input[type=text], input[type=number] {
+  width: 100%; padding: 12px; border: 1px solid #9eafc2;
+  border-radius: 7px; font-size: 17px;
+}
+button {
+  padding: 10px 16px; margin: 12px 6px 0 0;
+  background: #1260b5; color: white;
+  border: 0; border-radius: 7px; cursor: pointer;
+}
+button:hover { background: #084780; }
+button:focus-visible, input:focus-visible {
+  outline: 3px solid #ec9f22; outline-offset: 3px;
+}
+canvas { width: 100%; height: 230px; display: block; }
+#spectrum { height: 300px; }
+.stats {
+  display: flex; flex-wrap: wrap; gap: 12px; margin-top: 18px;
+}
+.stat {
+  background: #edf5ff; padding: 12px 18px; border-radius: 8px;
+}
+.note { color: #52657b; font-size: 14px; }
+#error { color: #b42318; min-height: 24px; }
+table { border-collapse: collapse; width: 100%; }
+th, td { text-align: left; padding: 10px; border-bottom: 1px solid #dde4ed; }
+.legend span { display: inline-block; margin-right: 20px; font-weight: bold; }
+@media (max-width: 650px) {
+  main { padding: 12px; }
+  .controls { grid-template-columns: 1fr; }
+  header, .card { padding: 16px; }
+  h1 { font-size: 25px; }
+}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1>Line Coding Simulator</h1>
+  <div>WCM555 • Compare NRZ, RZ, and Manchester encoding</div>
+</header>
+
+<section class="card">
+  <h2>Explore a binary signal</h2>
+  <div class="controls">
+    <div>
+      <label for="bits">Binary sequence — 1 to 32 bits</label>
+      <input id="bits" type="text" value="10110010"
+             maxlength="32" spellcheck="false">
+      <button id="random" type="button">Random 8 bits</button>
+      <button id="ones" type="button">All ones</button>
+      <button id="alternate" type="button">Alternating bits</button>
+    </div>
+    <div>
+      <label for="rate">Bit rate (kb/s)</label>
+      <input id="rate" type="number" min="1" max="1000"
+             step="1" value="100">
+      <p class="note">Enter 1–1000 kb/s. Changes update automatically.</p>
+    </div>
+  </div>
+  <div id="error" role="status" aria-live="polite"></div>
+  <div class="stats" id="stats"></div>
+</section>
+
+<section class="card">
+  <h2 style="color:#1260b5">Polar NRZ</h2>
+  <p>1 = +1 V; 0 = −1 V. Each level lasts one full bit time.</p>
+  <canvas id="nrz" role="img" aria-label="Polar NRZ voltage versus time"></canvas>
+</section>
+
+<section class="card">
+  <h2 style="color:#00856a">Polar RZ — 50% duty cycle</h2>
+  <p>1 = +1 V then 0 V; 0 = −1 V then 0 V.
+     Each pulse occupies half a bit time.</p>
+  <canvas id="rz" role="img" aria-label="Polar RZ voltage versus time"></canvas>
+</section>
+
+<section class="card">
+  <h2 style="color:#a345bf">Manchester</h2>
+  <p>Convention used: 1 = high-to-low; 0 = low-to-high.
+     Every bit has a transition at its midpoint.</p>
+  <canvas id="man" role="img" aria-label="Manchester voltage versus time"></canvas>
+</section>
+
+<section class="card">
+  <h2>Frequency spectrum</h2>
+  <div class="legend">
+    <span style="color:#1260b5">NRZ</span>
+    <span style="color:#00856a">RZ</span>
+    <span style="color:#a345bf">Manchester</span>
+  </div>
+  <canvas id="spectrum" role="img"
+          aria-label="FFT magnitude versus frequency for all three encodings"></canvas>
+  <p class="note">
+    FFT of the displayed finite sequence, zero-padded to 4096 samples.
+    Magnitude is |FFT| divided by the number of signal samples.
+    This is a magnitude spectrum, not power spectral density.
+    Dashed markers show theoretical pulse-spectrum first nulls:
+    NRZ at Rb; 50% RZ and Manchester at 2Rb.
+    Individual sequences can have additional nulls.
+  </p>
+</section>
+
+<section class="card">
+  <h2>Equations and interpretation</h2>
+  <table>
+    <tr><th>Quantity</th><th>Equation</th></tr>
+    <tr><td>Bit time</td><td>Tb = 1 / Rb</td></tr>
+    <tr><td>Sequence duration</td><td>T = N × Tb</td></tr>
+    <tr><td>RZ pulse width</td><td>τ = Tb / 2</td></tr>
+    <tr><td>RZ duty cycle</td><td>(τ / Tb) × 100% = 50%</td></tr>
+    <tr><td>NRZ first-null bandwidth</td><td>Bnull = Rb</td></tr>
+    <tr><td>RZ / Manchester first-null bandwidth</td><td>Bnull = 2Rb</td></tr>
+  </table>
+  <p>
+    Increasing bit rate shortens each bit and moves the spectrum toward
+    higher frequencies. Manchester guarantees a midpoint transition,
+    which supports clock recovery.
+  </p>
+  <p>
+    <strong>Try this:</strong> Select “All ones,” then compare the
+    transitions. Next, double the bit rate and observe the time values
+    and bandwidth markers.
+  </p>
+  <p class="note">
+    Model limitation: ideal rectangular pulses with instantaneous edges;
+    no noise, attenuation, or channel filtering. Their spectra extend
+    indefinitely. First-null bandwidth describes the main spectral lobe,
+    not a strict frequency cutoff or minimum channel bandwidth.
+  </p>
+</section>
+</main>
+
+<script>
+"use strict";
+
+const $ = id => document.getElementById(id);
+const colors = ["#1260b5", "#00856a", "#a345bf"];
+const samplesPerBit = 64;
+
+function prepare(id) {
+  const canvas = $(id);
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+  const ratio = window.devicePixelRatio || 1;
+  canvas.width = Math.round(width * ratio);
+  canvas.height = Math.round(height * ratio);
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  ctx.font = "12px Arial";
+  return { ctx, width, height };
+}
+
+// Encode each bit using 64 equally spaced samples.
+function encode(bits, type) {
+  const output = [];
+  for (const bit of bits) {
+    const level = bit === "1" ? 1 : -1;
+    for (let j = 0; j < samplesPerBit; j++) {
+      const firstHalf = j < samplesPerBit / 2;
+      if (type === "nrz") output.push(level);
+      if (type === "rz") output.push(firstHalf ? level : 0);
+      if (type === "man") output.push(firstHalf ? level : -level);
+    }
+  }
+  return output;
+}
+
+function waveform(id, data, bits, rate, color) {
+  const { ctx, width: w, height: h } = prepare(id);
+  const left = 52, right = w - 16, top = 35, bottom = h - 48;
+  const x = i => left + i / data.length * (right - left);
+  const y = v => top + (1 - v) / 2 * (bottom - top);
+  const durationUs = bits.length / rate * 1e6;
+
+  ctx.strokeStyle = "#dce4ee";
+  ctx.fillStyle = "#52657b";
+  for (const v of [-1, 0, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(left, y(v));
+    ctx.lineTo(right, y(v));
+    ctx.stroke();
+    ctx.textAlign = "right";
+    ctx.fillText(String(v), left - 10, y(v) + 4);
+  }
+  const labelEvery = Math.max(1, Math.ceil(bits.length / 8));
+  for (let i = 0; i <= bits.length; i++) {
+    const px = left + i / bits.length * (right - left);
+    ctx.beginPath();
+    ctx.moveTo(px, top);
+    ctx.lineTo(px, bottom);
+    ctx.stroke();
+    ctx.textAlign = "center";
+    if (i % labelEvery === 0 || i === bits.length) {
+      ctx.fillText(
+        (i / bits.length * durationUs).toFixed(1),
+        px, bottom + 20
+      );
+    }
+    if (i < bits.length) {
+      ctx.fillText(bits[i],
+        left + (i + 0.5) / bits.length * (right - left), 21);
+    }
+  }
+
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(x(0), y(data[0]));
+  for (let i = 0; i < data.length; i++) {
+    ctx.lineTo(x(i + 1), y(data[i]));
+    if (i + 1 < data.length) {
+      ctx.lineTo(x(i + 1), y(data[i + 1]));
+    }
+  }
+  ctx.stroke();
+  ctx.lineWidth = 1;
+  ctx.fillStyle = "#172b46";
+  ctx.textAlign = "left";
+  ctx.fillText("V", 10, 21);
+  ctx.textAlign = "center";
+  ctx.fillText("Time (µs)", (left + right) / 2, h - 5);
+}
+
+// Iterative radix-2 fast Fourier transform.
+function fftMagnitude(signal) {
+  const size = 4096;
+  const re = new Float64Array(size);
+  const im = new Float64Array(size);
+  re.set(signal);
+
+  for (let i = 1, j = 0; i < size; i++) {
+    let bit = size >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) {
+      const temp = re[i]; re[i] = re[j]; re[j] = temp;
+    }
+  }
+
+  for (let length = 2; length <= size; length <<= 1) {
+    const angle = -2 * Math.PI / length;
+    for (let start = 0; start < size; start += length) {
+      for (let j = 0; j < length / 2; j++) {
+        const c = Math.cos(angle * j);
+        const s = Math.sin(angle * j);
+        const a = start + j;
+        const b = a + length / 2;
+        const tr = re[b] * c - im[b] * s;
+        const ti = re[b] * s + im[b] * c;
+        re[b] = re[a] - tr;
+        im[b] = im[a] - ti;
+        re[a] += tr;
+        im[a] += ti;
+      }
+    }
+  }
+  return Array.from({ length: size / 2 + 1 },
+    (_, i) => Math.hypot(re[i], im[i]) / signal.length);
+}
+
+function spectrum(signals, rate) {
+  const { ctx, width: w, height: h } = prepare("spectrum");
+  const left = 58, right = w - 20, top = 46, bottom = h - 48;
+  const maxFrequency = 4 * rate;
+  const sampleRate = samplesPerBit * rate;
+  const x = f => left + f / maxFrequency * (right - left);
+  const y = v => bottom - v * (bottom - top);
+
+  ctx.strokeStyle = "#dce4ee";
+  ctx.fillStyle = "#52657b";
+  for (let i = 0; i <= 4; i++) {
+    const value = i / 4;
+    ctx.beginPath();
+    ctx.moveTo(left, y(value));
+    ctx.lineTo(right, y(value));
+    ctx.stroke();
+    ctx.textAlign = "right";
+    ctx.fillText(value.toFixed(2), left - 8, y(value) + 4);
+    const f = i * rate;
+    ctx.textAlign = "center";
+    ctx.fillText((f / 1000).toFixed(0), x(f), bottom + 20);
+  }
+
+  signals.forEach((signal, index) => {
+    const magnitudes = fftMagnitude(signal);
+    ctx.strokeStyle = colors[index];
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let k = 0; k <= 256; k++) {
+      const f = k * sampleRate / 4096;
+      if (k === 0) ctx.moveTo(x(f), y(magnitudes[k]));
+      else ctx.lineTo(x(f), y(magnitudes[k]));
+    }
+    ctx.stroke();
+  });
+
+  ctx.lineWidth = 1;
+  ctx.setLineDash([5, 5]);
+  for (const multiple of [1, 2]) {
+    ctx.strokeStyle = "#66758b";
+    ctx.beginPath();
+    ctx.moveTo(x(multiple * rate), top);
+    ctx.lineTo(x(multiple * rate), bottom);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  ctx.fillStyle = "#172b46";
+  ctx.textAlign = "center";
+  ctx.fillText("NRZ: Rb", x(rate), 18);
+  ctx.fillText("RZ / Manchester: 2Rb", x(2 * rate), 35);
+  ctx.fillText("Frequency (kHz)", (left + right) / 2, h - 5);
+  ctx.textAlign = "left";
+  ctx.fillText("Magnitude (V)", left, top - 9);
+}
+
+function update() {
+  const bits = $("bits").value.trim();
+  const rateK = Number($("rate").value);
+  if (!/^[01]{1,32}$/.test(bits)) {
+    $("error").textContent = "Enter 1–32 binary digits using only 0 and 1. Plots retain the last valid input.";
+    return;
+  }
+  if (!Number.isFinite(rateK) || rateK < 1 || rateK > 1000) {
+    $("error").textContent = "Enter a bit rate between 1 and 1000 kb/s. Plots retain the last valid input.";
+    return;
+  }
+  $("error").textContent = "";
+  const rate = rateK * 1000;
+  const tbUs = 1e6 / rate;
+  $("stats").innerHTML = `
+    <div class="stat"><strong>Bit time</strong><br>${tbUs.toFixed(3)} µs</div>
+    <div class="stat"><strong>RZ pulse width</strong><br>${(tbUs / 2).toFixed(3)} µs</div>
+    <div class="stat"><strong>Sequence duration</strong><br>${(bits.length * tbUs).toFixed(3)} µs</div>
+    <div class="stat"><strong>First nulls</strong><br>${rateK} / ${2 * rateK} kHz</div>
+  `;
+
+  const signals = ["nrz", "rz", "man"].map(type => encode(bits, type));
+  ["nrz", "rz", "man"].forEach((id, i) =>
+    waveform(id, signals[i], bits, rate, colors[i]));
+  spectrum(signals, rate);
+}
+
+$("bits").addEventListener("input", update);
+$("rate").addEventListener("input", update);
+$("random").addEventListener("click", () => {
+  $("bits").value = Array.from({ length: 8 },
+    () => Math.random() < 0.5 ? "0" : "1").join("");
+  update();
+});
+$("ones").addEventListener("click", () => {
+  $("bits").value = "11111111"; update();
+});
+$("alternate").addEventListener("click", () => {
+  $("bits").value = "10101010"; update();
+});
+window.addEventListener("resize", update);
+update();
+</script>
+</body>
+</html>
